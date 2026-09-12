@@ -47,13 +47,27 @@ The button is added to the right side of the bar. Move it with:
 omarchy bar move io.github.chachizr.srt-replay --section center
 ```
 
+### Open the SRT port (required)
+
+Omarchy's firewall blocks incoming connections by default, so no sender can
+reach SRT Replay until you allow its port. Do this once, as root:
+
+```sh
+ufw allow 9000/udp
+```
+
+If you change the port in the panel, allow that port instead. This isn't
+needed for Caller mode, where SRT Replay makes the connection itself.
+
 ## Send a stream from OBS
 
 On the computer you want to capture, for example your gaming PC, using OBS
 Studio 30 or later:
 
-1. **On Omarchy:** open the SRT Replay panel, switch SRT on, and note the URL
-   under **CONNECTION**, for example `srt://192.168.1.20:9000`.
+1. **On Omarchy:** make sure the SRT port is open
+   ([see above](#open-the-srt-port-required)), then open the SRT Replay
+   panel, switch SRT on, and note the URL under **CONNECTION**, for example
+   `srt://192.168.1.20:9000`.
 2. **In OBS, go to Settings → Stream:** set **Service** to **Custom…**, put
    the URL with `?mode=caller&latency=120000` added in **Server**, and leave
    **Stream Key** empty:
@@ -70,10 +84,6 @@ Studio 30 or later:
      network.
    - **Keyframe Interval:** 1 s, so clips start close to the moment you want.
 4. **Click Start Streaming.** The bar icon turns live within a few seconds.
-
-If nothing arrives, the receiving machine's firewall is the usual cause.
-Omarchy blocks incoming connections by default. Allow the SRT port by running
-this as root: `ufw allow 9000/udp`.
 
 OBS is only one option. Anything that sends MPEG-TS over SRT works: Larix
 Broadcaster on a phone, vMix, hardware encoders, or `ffmpeg`. If your sender
