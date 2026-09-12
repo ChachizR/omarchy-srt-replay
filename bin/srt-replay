@@ -1,0 +1,143 @@
+#!/bin/bash
+# SRT Replay buffer helper.
+#
+# The buffer is a directory of 1 s-target MPEG-TS segments (each starts on a
+# keyframe) plus list.csv ("name,start,end" per finished segment), written by
+# ffmpeg's segment muxer. The newest segment is still being written.
+#
+#   srt-replay prune <dir> <keep-seconds> [max-stall-seconds] [max-bytes]
+#       Delete segments older than the newest one by more than keep-seconds.
+#       Age is relative to the newest segment, not the clock, so the buffer
+#       survives a disconnect. Prints "<buffered-seconds> <stuck>", where
+#       stuck=1 means the segment being written can't close (no finished
+#       segment for max-stall-seconds while data still arrives, default 30,
+#       or it grew past max-bytes, default 256 MiB). Pruning can't shrink
+#       that segment, so the caller must restart the segmenter.
+#
+#   srt-replay clip <dir> <seconds> <output.mkv>
+#       Remux (no re-encode) the last <seconds> into a Matroska file. The
+#       clip starts on the keyframe at or before the requested point, so it
+#       can run up to one keyframe interval longer. The segment being written
+#       can end mid-frame, so the helper waits for it to finish (at the next
+#       keyframe) and uses finished segments only. Prints "<output> <secs>".
+set -euo pipefail
+shopt -s nullglob
+
+usage() {
+  echo "usage: srt-replay prune <dir> <keep-seconds> [max-stall-seconds] [max-bytes] | clip <dir> <seconds> <output.mkv>" >&2
+  exit 2
+}
+
+# Emit "name start end" for finished segments that are still on disk.
+finished_segments() {
+  local dir=$1
+  [[ -f $dir/list.csv ]] || return 0
+  while IFS=, read -r name start end; do
+    [[ -f $dir/$name ]] && echo "$name $start $end"
+  done <"$dir/list.csv"
+}
+
+cmd=${1:-}
+case "$cmd" in
+  prune)
+    [[ $# -ge 3 && $# -le 5 ]] || usage
+    dir=$2 keep=$3 max_stall=${4:-30} max_bytes=${5:-268435456}
+    files=("$dir"/seg*.ts)
+    (( ${#files[@]} )) || { echo "0 0"; exit 0; }
+    now=$(date +%s)
+    newest=${files[-1]}
+    newest_mtime=$(stat -c %Y "$newest")
+    for f in "${files[@]}"; do
+      (( $(stat -c %Y "$f") < newest_mtime - keep )) && rm -f -- "$f"
+    done
+    # "Still arriving" = the segment being written changed in the last 15 s.
+    # A trickle (audio-only after video dropped) is flushed in 256 KiB
+    # bursts, ~16 s apart at 128 kb/s, so a shorter window would miss it.
+    # After a disconnect the segment stops changing; its last write lands
+    # within one keyframe interval of the last finished segment, so for
+    # keyframe intervals up to 15 s a disconnect never reads as stuck.
+    stuck=0
+    (( $(stat -c %s "$newest") > max_bytes )) && stuck=1
+    if [[ -f $dir/list.csv ]] && (( now - newest_mtime < 15 )) \
+        && (( now - $(stat -c %Y "$dir/list.csv") > max_stall )); then
+      stuck=1
+    fi
+    buffered=$(finished_segments "$dir" | awk 'NR == 1 { first = $2 } { last = $3 } END { printf "%d", (NR ? last - first : 0) }')
+    echo "$buffered $stuck"
+    ;;
+
+  clip)
+    [[ $# -eq 4 ]] || usage
+    dir=$2 want=$3 out=$4
+    files=("$dir"/seg*.ts)
+    (( ${#files[@]} )) || { echo "replay buffer is empty" >&2; exit 1; }
+    newest=$(basename "${files[-1]}")
+    mapfile -t done_list < <(finished_segments "$dir")
+
+    # Stream time "now" (at the press): the last finished segment's end,
+    # plus however much of the in-progress segment has been written.
+    last_end=0
+    newest_done=0
+    if (( ${#done_list[@]} )); then
+      read -r last_name _ last_end <<<"${done_list[-1]}"
+      [[ $last_name == "$newest" ]] && newest_done=1
+    fi
+    tail_secs=0
+    if (( ! newest_done )); then
+      tail_secs=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$dir/$newest" 2>/dev/null || true)
+      [[ $tail_secs =~ ^[0-9.]+$ ]] || tail_secs=0
+    fi
+    buffer_end=$(awk -v a="$last_end" -v b="$tail_secs" 'BEGIN { printf "%.3f", a + b }')
+
+    # Wait (up to 12 s) for the in-progress segment to finish so the clip
+    # never ends on a half-written frame. Stop waiting if it stops growing:
+    # the stream has stalled or gone, and finished segments are all there is.
+    if (( ! newest_done )); then
+      for (( i = 0; i < 120; i++ )); do
+        grep -q "^$newest," "$dir/list.csv" 2>/dev/null && break
+        [[ -f $dir/$newest ]] || break
+        (( $(date +%s) - $(stat -c %Y "$dir/$newest") > 2 )) && break
+        sleep 0.1
+      done
+      mapfile -t done_list < <(finished_segments "$dir")
+    fi
+    (( ${#done_list[@]} )) || { echo "no finished segment in the replay buffer yet" >&2; exit 1; }
+
+    # Latest finished segment that starts at or before (now - want); if the
+    # buffer is shorter than requested, take all of it.
+    target=$(awk -v e="$buffer_end" -v w="$want" 'BEGIN { printf "%.3f", e - w }')
+    pick=0
+    start=""
+    for i in "${!done_list[@]}"; do
+      read -r _ s _ <<<"${done_list[$i]}"
+      if awk -v s="$s" -v t="$target" 'BEGIN { exit !(s <= t) }'; then
+        pick=$i
+        start=$s
+      fi
+    done
+    if [[ -z $start ]]; then
+      read -r _ start _ <<<"${done_list[0]}"
+      pick=0
+    fi
+
+    inputs=()
+    for (( i = pick; i < ${#done_list[@]}; i++ )); do
+      read -r name _ _ <<<"${done_list[$i]}"
+      inputs+=("$dir/$name")
+    done
+    joined=$(IFS='|'; echo "${inputs[*]}")
+
+    mkdir -p -- "$(dirname -- "$out")"
+    tmp="$out.part"
+    ffmpeg -hide_banner -nostdin -loglevel error -i "concat:$joined" \
+      -map "0:v?" -map "0:a?" -c copy -avoid_negative_ts make_zero -f matroska "$tmp"
+    mv -- "$tmp" "$out"
+    secs=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$out" 2>/dev/null || true)
+    [[ $secs =~ ^[0-9.]+$ ]] || secs=$(awk -v e="$buffer_end" -v s="$start" 'BEGIN { printf "%.3f", e - s }')
+    echo "$out $secs"
+    ;;
+
+  *)
+    usage
+    ;;
+esac

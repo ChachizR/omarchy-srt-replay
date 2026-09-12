@@ -1,0 +1,23 @@
+#!/bin/bash
+# Pin/unpin the SRT Replay pop-out player on Hyprland, or report its pin state.
+# Usage: srt-window pinned|toggle-pin   (prints "true"/"false")
+set -euo pipefail
+
+client=$(hyprctl clients -j | jq -c '[.[] | select(.class == "org.quickshell" and .title == "SRT Replay")][0] // empty')
+[[ -n $client ]] || exit 1
+addr=$(jq -r .address <<<"$client")
+
+case "${1:-}" in
+  pinned)
+    jq -r .pinned <<<"$client"
+    ;;
+  toggle-pin)
+    hyprctl dispatch "hl.dsp.window.pin({ window = \"address:$addr\" })" >/dev/null 2>&1 ||
+      hyprctl dispatch pin "address:$addr" >/dev/null
+    hyprctl clients -j | jq -r --arg a "$addr" '.[] | select(.address == $a) | .pinned'
+    ;;
+  *)
+    echo "usage: srt-window pinned|toggle-pin" >&2
+    exit 2
+    ;;
+esac

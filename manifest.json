@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.chachizr.srt-replay",
+  "name": "SRT Replay",
+  "version": "1.0.0",
+  "author": "ChachizR",
+  "license": "MIT",
+  "description": "Receive, monitor, record, and clip SRT streams with a detachable player.",
+  "kinds": ["service", "bar-widget"],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "SRT Replay",
+    "description": "SRT listener/caller with a docked preview, pop-out player, and one-click MKV recording.",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "mode": "listener",
+      "port": 9000,
+      "latency": 120,
+      "callerHost": "",
+      "recordDir": "",
+      "snapshotDir": "",
+      "autoStart": "Off",
+      "replayBuffer": "On",
+      "clipHotkeys": "Off"
+    },
+    "schema": [
+      { "key": "mode", "type": "enum", "label": "Connection mode", "options": ["listener", "caller"], "defaultValue": "listener", "description": "listener waits for a sender (OBS, Larix, vMix) to connect; caller connects out to a remote SRT listener." },
+      { "key": "port", "type": "integer", "label": "SRT port", "min": 1, "max": 65535, "step": 1, "defaultValue": 9000 },
+      { "key": "latency", "type": "integer", "label": "Receiver latency (ms)", "min": 20, "max": 8000, "step": 10, "defaultValue": 120, "description": "Higher values survive lossy links at the cost of delay. SRT uses the larger of both peers' values." },
+      { "key": "callerHost", "type": "string", "label": "Remote host (caller mode)", "defaultValue": "" },
+      { "key": "recordDir", "type": "path", "label": "Recordings folder", "defaultValue": "", "description": "Empty uses ~/Videos/SRT." },
+      { "key": "snapshotDir", "type": "path", "label": "Snapshots folder", "defaultValue": "", "description": "Empty uses ~/Pictures/SRT." },
+      { "key": "autoStart", "type": "enum", "label": "Start with the shell", "options": ["Off", "On"], "defaultValue": "Off" },
+      { "key": "replayBuffer", "type": "enum", "label": "Replay buffer for clips", "options": ["On", "Off"], "defaultValue": "On", "description": "Keeps the last 75 s of the stream in RAM (about 110 MB at 12 Mb/s) so the panel's clip buttons can save the last 10 s to 1 min. Clips go to <recordings>/Clips." },
+      { "key": "clipHotkeys", "type": "enum", "label": "Clip hotkeys (1, 2, 3, 6)", "options": ["Off", "On"], "defaultValue": "Off", "description": "While a stream is live, keys 1/2/3/6 save the last 10 s/20 s/30 s/1 min from any app. The digits don't type in other apps while active." }
+    ]
+  }
+}
