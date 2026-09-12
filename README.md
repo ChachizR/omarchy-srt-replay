@@ -18,6 +18,23 @@ last few seconds with one click or one key.
 
 Requires Omarchy 4 (Quattro).
 
+## Why SRT Replay
+
+Capturing gameplay or a screen from one computer on a second one usually
+means a hardware capture card, or running a full OBS setup on both machines:
+one to send, one to receive and record. SRT Replay replaces the receiving
+side with a small bar widget.
+
+- **No second OBS.** Your Omarchy machine just listens. Point the sender at
+  it and the stream appears in the panel, ready to watch, record or clip.
+- **No capture card.** The video travels over your network as SRT, a
+  protocol built to recover lost packets while keeping delay low, so a
+  normal home network is enough. Wired is best for high bitrates.
+- **Clips that are almost ready to publish.** Leave the replay buffer running
+  and press a clip button (or `1` `2` `3` `6`) right after something good
+  happens. You get the last 10 s to 1 min as an MKV at the sender's original
+  quality, with little or no editing needed.
+
 ## Install
 
 ```sh
@@ -29,6 +46,38 @@ The button is added to the right side of the bar. Move it with:
 ```sh
 omarchy bar move io.github.chachizr.srt-replay --section center
 ```
+
+## Send a stream from OBS
+
+On the computer you want to capture, for example your gaming PC, using OBS
+Studio 30 or later:
+
+1. **On Omarchy:** open the SRT Replay panel, switch SRT on, and note the URL
+   under **CONNECTION**, for example `srt://192.168.1.20:9000`.
+2. **In OBS, go to Settings → Stream:** set **Service** to **Custom…**, put
+   the URL with `?mode=caller&latency=120000` added in **Server**, and leave
+   **Stream Key** empty:
+
+   ```
+   srt://192.168.1.20:9000?mode=caller&latency=120000
+   ```
+
+   OBS reads `latency` in microseconds, so `120000` is 120 ms. Raise it if
+   the picture stutters over Wi-Fi.
+3. **In Settings → Output** (Output Mode: Advanced) → **Streaming**:
+   - **Encoder:** use a hardware one if available.
+   - **Rate control:** CBR, around 10,000–20,000 Kbps for 1080p60 on a wired
+     network.
+   - **Keyframe Interval:** 1 s, so clips start close to the moment you want.
+4. **Click Start Streaming.** The bar icon turns live within a few seconds.
+
+If nothing arrives, the receiving machine's firewall is the usual cause.
+Omarchy blocks incoming connections by default. Allow the SRT port by running
+this as root: `ufw allow 9000/udp`.
+
+OBS is only one option. Anything that sends MPEG-TS over SRT works: Larix
+Broadcaster on a phone, vMix, hardware encoders, or `ffmpeg`. If your sender
+is the one listening, switch SRT Replay to **Caller** and enter its address.
 
 ## Dependencies
 
